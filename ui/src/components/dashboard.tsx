@@ -16,13 +16,27 @@ export default function Dashboard({ prompts }: { prompts: PromptData[] }) {
   const [favorites, setFavorites] = useState<string[]>([]);
   const { theme, setTheme } = useTheme();
 
-  // API Keys
-  const [openaiKey, setOpenaiKey] = useState('');
-  const [anthropicKey, setAnthropicKey] = useState('');
+  // API Keys Map: { [providerName]: apiKey }
+  const [apiKeys, setApiKeys] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    setOpenaiKey(localStorage.getItem('openai_key') || '');
-    setAnthropicKey(localStorage.getItem('anthropic_key') || '');
+    const storedKeys = localStorage.getItem('prompt_leaks_api_keys');
+    if (storedKeys) {
+        setApiKeys(JSON.parse(storedKeys));
+    } else {
+        // Migration for old keys
+        const oldOpenai = localStorage.getItem('openai_key');
+        const oldAnthropic = localStorage.getItem('anthropic_key');
+        if (oldOpenai || oldAnthropic) {
+            const newKeys = {
+                OpenAI: oldOpenai || '',
+                Anthropic: oldAnthropic || ''
+            };
+            setApiKeys(newKeys);
+            localStorage.setItem('prompt_leaks_api_keys', JSON.stringify(newKeys));
+        }
+    }
+
     const storedFavorites = localStorage.getItem('favorites');
     if (storedFavorites) {
       setFavorites(JSON.parse(storedFavorites));
@@ -30,9 +44,12 @@ export default function Dashboard({ prompts }: { prompts: PromptData[] }) {
   }, []);
 
   const saveKeys = () => {
-    localStorage.setItem('openai_key', openaiKey);
-    localStorage.setItem('anthropic_key', anthropicKey);
-    alert('Keys saved locally!');
+    localStorage.setItem('prompt_leaks_api_keys', JSON.stringify(apiKeys));
+    alert('All API keys saved locally!');
+  };
+
+  const updateApiKey = (provider: string, key: string) => {
+    setApiKeys(prev => ({ ...prev, [provider]: key }));
   };
 
   const toggleFavorite = (e: React.MouseEvent, id: string) => {
@@ -44,21 +61,19 @@ export default function Dashboard({ prompts }: { prompts: PromptData[] }) {
     localStorage.setItem('favorites', JSON.stringify(newFavorites));
   };
 
-  const currentProvider = selectedPrompt?.provider === 'Anthropic' ? 'Anthropic' : 'OpenAI';
-  const currentKey = currentProvider === 'Anthropic' ? anthropicKey : openaiKey;
+  const currentProvider = selectedPrompt?.provider || 'OpenAI';
+  const currentKey = apiKeys[currentProvider] || '';
 
-  const chat = useChat({
+  const { messages, input, handleInputChange, handleSubmit, setMessages, isLoading } = useChat({
     // @ts-ignore
     api: '/api/chat',
     body: {
       systemPrompt: selectedPrompt?.content,
       provider: currentProvider,
+      modelName: selectedPrompt?.model,
       apiKey: currentKey,
     },
   });
-
-  // @ts-ignore
-  const { messages, input, handleInputChange, handleSubmit, setMessages, isLoading } = chat;
 
   const filteredPrompts = prompts.filter(p => {
     if (searchQuery === 'is:favorite') return favorites.includes(p.id);
@@ -67,12 +82,27 @@ export default function Dashboard({ prompts }: { prompts: PromptData[] }) {
            p.model.toLowerCase().includes(searchQuery.toLowerCase());
   });
 
-  const providers = Array.from(new Set(prompts.map(p => p.provider)));
+  const providers = Array.from(new Set(prompts.map(p => p.provider))).sort();
 
   const copyToClipboard = (text: string, id: string) => {
     navigator.clipboard.writeText(text);
     setCopiedId(id);
     setTimeout(() => setCopiedId(null), 2000);
+  };
+
+  const getProviderColor = (provider: string) => {
+    switch (provider.toLowerCase()) {
+        case 'openai': return 'bg-black text-white';
+        case 'anthropic': return 'bg-[#D97757] text-white';
+        case 'xai': return 'bg-blue-600 text-white';
+        case 'meta': return 'bg-blue-500 text-white';
+        case 'google': return 'bg-red-500 text-white';
+        default: return 'bg-secondary text-secondary-foreground';
+    }
+  };
+
+  const getProviderInitials = (provider: string) => {
+    return provider.substring(0, 3).toUpperCase();
   };
 
   return (
@@ -493,76 +523,55 @@ export default function Dashboard({ prompts }: { prompts: PromptData[] }) {
             exit={{ opacity: 0, x: -20 }}
             className="flex-1 flex flex-col h-full bg-muted/30 p-12 overflow-y-auto"
           >
-             <div className="max-w-xl mx-auto w-full space-y-8">
+             <div className="max-w-2xl mx-auto w-full space-y-8 pb-12">
                 <div>
                     <h1 className="text-3xl font-bold mb-2">API Configuration</h1>
                     <p className="text-muted-foreground text-sm">Configure your API keys to enable the AI Playground. Your keys are stored <strong>locally in your browser's localStorage</strong> and are only used for requests from this application.</p>
                 </div>
 
-                <div className="space-y-6">
-                    <div className="p-6 bg-card border border-border rounded-xl shadow-sm space-y-4">
-                        <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 bg-black rounded-lg flex items-center justify-center">
-                                    <span className="text-white text-[10px] font-bold">GPT</span>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {providers.map(provider => (
+                        <div key={provider} className="p-6 bg-card border border-border rounded-xl shadow-sm space-y-4 hover:border-primary/50 transition-colors">
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                    <div className={cn("w-10 h-10 rounded-lg flex items-center justify-center font-bold text-[10px]", getProviderColor(provider))}>
+                                        {getProviderInitials(provider)}
+                                    </div>
+                                    <div>
+                                        <h3 className="font-semibold text-sm">{provider}</h3>
+                                        <p className="text-[10px] text-muted-foreground line-clamp-1">{provider} models</p>
+                                    </div>
                                 </div>
-                                <div>
-                                    <h3 className="font-semibold text-sm">OpenAI</h3>
-                                    <p className="text-[10px] text-muted-foreground">Used for ChatGPT system prompts</p>
-                                </div>
+                                {apiKeys[provider] && <Check className="w-4 h-4 text-green-500" />}
                             </div>
-                            {openaiKey && <Check className="w-4 h-4 text-green-500" />}
-                        </div>
-                        <div className="space-y-1.5">
-                            <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">API KEY</label>
-                            <input
-                                type="password"
-                                value={openaiKey}
-                                onChange={(e) => setOpenaiKey(e.target.value)}
-                                placeholder="sk-..."
-                                className="w-full px-4 py-2.5 bg-muted border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary text-sm font-mono"
-                            />
-                        </div>
-                    </div>
-
-                    <div className="p-6 bg-card border border-border rounded-xl shadow-sm space-y-4">
-                         <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 bg-[#D97757] rounded-lg flex items-center justify-center text-white">
-                                    <span className="text-[10px] font-bold">CLD</span>
-                                </div>
-                                <div>
-                                    <h3 className="font-semibold text-sm">Anthropic</h3>
-                                    <p className="text-[10px] text-muted-foreground">Used for Claude system prompts</p>
-                                </div>
+                            <div className="space-y-1.5">
+                                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">API KEY</label>
+                                <input
+                                    type="password"
+                                    value={apiKeys[provider] || ''}
+                                    onChange={(e) => updateApiKey(provider, e.target.value)}
+                                    placeholder="Enter key..."
+                                    className="w-full px-4 py-2.5 bg-muted border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary text-sm font-mono"
+                                />
                             </div>
-                            {anthropicKey && <Check className="w-4 h-4 text-green-500" />}
                         </div>
-                        <div className="space-y-1.5">
-                            <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">API KEY</label>
-                            <input
-                                type="password"
-                                value={anthropicKey}
-                                onChange={(e) => setAnthropicKey(e.target.value)}
-                                placeholder="sk-ant-..."
-                                className="w-full px-4 py-2.5 bg-muted border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary text-sm font-mono"
-                            />
-                        </div>
-                    </div>
+                    ))}
+                </div>
 
+                <div className="sticky bottom-0 bg-muted/80 backdrop-blur-sm p-4 border-t border-border -mx-12 mt-8 flex justify-center">
                     <button
                         onClick={saveKeys}
-                        className="w-full bg-primary text-primary-foreground py-3 rounded-lg font-bold hover:opacity-90 transition-all shadow-md active:scale-[0.98] flex items-center justify-center gap-2"
+                        className="max-w-md w-full bg-primary text-primary-foreground py-3 rounded-lg font-bold hover:opacity-90 transition-all shadow-lg active:scale-[0.98] flex items-center justify-center gap-2"
                     >
                         <Sparkles className="w-4 h-4 text-amber-400" />
-                        Save Configuration
+                        Save All Configurations
                     </button>
+                </div>
 
-                    <div className="p-4 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900 rounded-lg">
-                        <p className="text-[11px] text-amber-800 dark:text-amber-200 leading-relaxed">
-                            <strong>Note:</strong> This application is for demonstration purposes. Be careful with your API keys. You can clear them anytime by deleting the input and saving.
-                        </p>
-                    </div>
+                <div className="p-4 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900 rounded-lg">
+                    <p className="text-[11px] text-amber-800 dark:text-amber-200 leading-relaxed">
+                        <strong>Note:</strong> The playground currently supports OpenAI, Anthropic, Google (Gemini), xAI (Grok), Mistral, and Groq. Other providers may fallback to OpenAI format if a key is provided.
+                    </p>
                 </div>
              </div>
           </motion.div>
